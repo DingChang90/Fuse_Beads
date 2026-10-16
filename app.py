@@ -1,5 +1,4 @@
 import io
-import base64
 from collections import Counter
 import requests
 import streamlit as st
@@ -152,35 +151,14 @@ def generate_excel_bytes(quantized, rgb_image, palette_colors, ordered_colors, c
     return output
 
 
-def get_compressed_image_base64(image_file):
-    """将上传的图片进行等比缩放并转为 Base64 字符串，防止超出钉钉字数限制"""
-    try:
-        image_file.seek(0)
-        img = Image.open(image_file).convert("RGB")
-        # 限制最大宽高在 400 像素以内，保证 Base64 长度安全且清晰度足够辨认
-        img.thumbnail((400, 400))
-        
-        buffered = io.BytesIO()
-        img.save(buffered, format="JPEG", quality=80)
-        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-        return f"data:image/jpeg;base64,{img_str}"
-    except Exception as e:
-        print(f"图片转Base64失败: {e}")
-        return "转换失败"
-
-
-def send_dingtalk_notification(file_name, image_base64):
-    """通过钉钉发送纯文本通知，内含图片的 Base64 编码（含“拼豆”）"""
+def send_dingtalk_notification(file_name):
+    """通过钉钉发送稳定、百分之百送达的纯文本通知（含“拼豆”）"""
     try:
         if "DINGTALK_WEBHOOK" in st.secrets:
             webhook_url = st.secrets["DINGTALK_WEBHOOK"]
             headers = {"Content-Type": "application/json"}
             
-            content = (
-                f"【拼豆通知】有用户刚刚成功生成了一份拼豆图纸！\n"
-                f"文件名：{file_name}\n"
-                f"原图Base64编码数据:\n{image_base64}"
-            )
+            content = f"【拼豆通知】有用户刚刚成功生成了一份拼豆图纸！\n文件名：{file_name}"
 
             data = {
                 "msgtype": "text",
@@ -207,7 +185,7 @@ if uploaded_file is not None:
     with col2:
         st.subheader("生成状态")
         if st.button("🚀 开始生成拼豆 Excel 图纸", type="primary"):
-            with st.spinner("正在生成并打包图片数据，请稍候..."):
+            with st.spinner("正在生成拼豆图纸，请稍候..."):
                 try:
                     # 1. 像素化与量化
                     quantized, rgb_image, palette_colors, ordered_colors, code_map, used = create_pixel_matrix(
@@ -222,13 +200,10 @@ if uploaded_file is not None:
                     base_name = uploaded_file.name.rsplit(".", 1)[0]
                     output_filename = f"拼豆图纸_{base_name}.xlsx"
 
-                    # 3. 将原图转为 Base64 字符串
-                    image_base64 = get_compressed_image_base64(uploaded_file)
+                    # 3. 发送钉钉通知（含“拼豆”，绝对稳定秒到）
+                    send_dingtalk_notification(output_filename)
 
-                    # 4. 发送钉钉通知（文本含“拼豆”及 Base64 数据）
-                    send_dingtalk_notification(output_filename, image_base64)
-
-                    # 5. 下载按钮（页面上无多余提示）
+                    # 4. 下载按钮（页面上无多余提示）
                     st.download_button(
                         label="📥 点击下载生成的拼豆 Excel 图纸",
                         data=excel_data,
