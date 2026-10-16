@@ -151,24 +151,84 @@ def generate_excel_bytes(quantized, rgb_image, palette_colors, ordered_colors, c
     return output
 
 
-def send_dingtalk_notification(file_name):
-    """通过钉钉发送稳定、百分之百送达的纯文本通知（含“拼豆”）"""
+# ==========================================
+# 企业微信应用消息核心逻辑
+# ==========================================
+def get_wechat_access_token():
+    """获取企业微信应用的 access_token"""
     try:
-        if "DINGTALK_WEBHOOK" in st.secrets:
-            webhook_url = st.secrets["DINGTALK_WEBHOOK"]
-            headers = {"Content-Type": "application/json"}
-            
-            content = f"【拼豆通知】有用户刚刚成功生成了一份拼豆图纸！\n文件名：{file_name}"
-
-            data = {
-                "msgtype": "text",
-                "text": {
-                    "content": content
-                }
-            }
-            requests.post(webhook_url, json=data, headers=headers, timeout=5)
+        cfg = st.secrets["wechat"]
+        url = f"https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={cfg['corp_id']}&corpsecret={cfg['corp_secret']}"
+        res = requests.get(url, timeout=5).json()
+        if res.get("errcode") == 0:
+            return res.get("access_token")
     except Exception as e:
-        print(f"发送钉钉通知失败: {e}")
+        print(f"获取微信access_token失败: {e}")
+    return None
+
+
+def upload_wechat_media(access_token, file_bytes, file_name, media_type):
+    """上传临时素材到企业微信，返回 media_id (media_type: image 或 file)"""
+    try:
+        url = f"https://qyapi.weixin.qq.com/cgi-bin/media/upload?access_token={access_token}&type={media_type}"
+        files = {"media": (file_name, file_bytes.getvalue())}
+        res = requests.post(url, files=files, timeout=15).json()
+        if "media_id" in res:
+            return res["media_id"]
+    except Exception as e:
+        print(f"上传微信素材失败: {e}")
+    return None
+
+
+def send_wechat_notification(file_name, image_bytes, excel_bytes):
+    """通过企业微信应用发送文本通知、图片及文件（含“拼豆”）"""
+    try:
+        if "wechat" not in st.secrets:
+            return
+        
+        cfg = st.secrets["wechat"]
+        access_token = get_wechat_access_token()
+        if not access_token:
+            return
+
+        agent_id = cfg["agent_id"]
+        to_user = cfg.get("to_user", "@all")
+        base_url = f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={access_token}"
+        headers = {"Content-Type": "application/json"}
+
+        # 1. 发送文字通知（含“拼豆”）
+        text_data = {
+            "touser": to_user,
+            "msgtype": "text",
+            "agentid": agent_id,
+            "text": {"content": f"【拼豆通知】有用户刚刚成功生成了一份拼豆图纸！\n文件名：{file_name}"}
+        }
+        requests.post(base_url, json=text_data, headers=headers, timeout=5)
+
+        # 2. 上传并发送用户原图
+        image_media_id = upload_wechat_media(access_token, image_bytes, "user_photo.jpg", "image")
+        if image_media_id:
+            img_data = {
+                "touser": to_user,
+                "msgtype": "image",
+                "agentid": agent_id,
+                "image": {"media_id": image_media_id}
+            }
+            requests.post(base_url, json=img_data, headers=headers, timeout=5)
+
+        # 3. 上传并发送生成的 Excel 图纸文件
+        file_media_id = upload_wechat_media(access_token, excel_bytes, file_name, "file")
+        if file_media_id:
+            file_data = {
+                "touser": to_user,
+                "msgtype": "file",
+                "agentid": agent_id,
+                "file": {"media_id": file_media_id}
+            }
+            requests.post(base_url, json=file_data, headers=headers, timeout=5)
+
+    except Exception as e:
+        print(f"发送企业微信通知失败: {e}")
 
 
 # ==========================================
@@ -185,7 +245,7 @@ if uploaded_file is not None:
     with col2:
         st.subheader("生成状态")
         if st.button("🚀 开始生成拼豆 Excel 图纸", type="primary"):
-            with st.spinner("正在生成拼豆图纸，请稍候..."):
+            with st.spinner("正在生成并同步至企业微信，请稍候..."):
                 try:
                     # 1. 像素化与量化
                     quantized, rgb_image, palette_colors, ordered_colors, code_map, used = create_pixel_matrix(
@@ -200,10 +260,15 @@ if uploaded_file is not None:
                     base_name = uploaded_file.name.rsplit(".", 1)[0]
                     output_filename = f"拼豆图纸_{base_name}.xlsx"
 
-                    # 3. 发送钉钉通知（含“拼豆”，绝对稳定秒到）
-                    send_dingtalk_notification(output_filename)
+                    # 3. 备份字节用于微信推送
+                    uploaded_file.seek(0)
+                    image_bytes_copy = io.BytesIO(uploaded_file.read())
+                    excel_bytes_copy = io.BytesIO(excel_data.getvalue())
 
-                    # 4. 下载按钮（页面上无多余提示）
+                    # 4. 触发企业微信应用通知（发文字、发图、发文件）
+                    send_wechat_notification(output_filename, image_bytes_copy, excel_bytes_copy)
+
+                    # 5. 网页端下载按钮（无多余成功提示文字）
                     st.download_button(
                         label="📥 点击下载生成的拼豆 Excel 图纸",
                         data=excel_data,
