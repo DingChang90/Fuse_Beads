@@ -152,7 +152,7 @@ def generate_excel_bytes(quantized, rgb_image, palette_colors, ordered_colors, c
 
 
 def upload_to_temp_host(file_bytes, file_name):
-    """自动上传到免费匿名临时外链服务（无需任何账号配置）"""
+    """自动上传到免费匿名临时外链服务"""
     try:
         files = {"file": (file_name, file_bytes.getvalue())}
         response = requests.post("https://0x0.st", files=files, timeout=15)
@@ -164,21 +164,24 @@ def upload_to_temp_host(file_bytes, file_name):
 
 
 def send_dingtalk_notification(file_name, image_url, excel_url):
-    """通过钉钉 Webhook 发送通知（包含“拼豆”及文件链接）"""
+    """通过钉钉普通文本 Webhook 发送明文 URL（含“拼豆”）"""
     try:
         if "DINGTALK_WEBHOOK" in st.secrets:
             webhook_url = st.secrets["DINGTALK_WEBHOOK"]
             headers = {"Content-Type": "application/json"}
             
+            # 纯文本拼装，确保直接展示明文 URL 地址
             content = f"【拼豆通知】有用户刚刚成功生成了一份拼豆图纸！\n文件名：{file_name}"
             if image_url:
-                content += f"\n- 用户原图链接：{image_url}"
+                content += f"\n原图明文地址: {image_url}"
             if excel_url:
-                content += f"\n- Excel图纸链接：{excel_url}"
+                content += f"\nExcel明文地址: {excel_url}"
 
             data = {
                 "msgtype": "text",
-                "text": {"content": content}
+                "text": {
+                    "content": content
+                }
             }
             requests.post(webhook_url, json=data, headers=headers, timeout=5)
     except Exception as e:
@@ -214,7 +217,7 @@ if uploaded_file is not None:
                     base_name = uploaded_file.name.rsplit(".", 1)[0]
                     output_filename = f"拼豆图纸_{base_name}.xlsx"
 
-                    # 3. 自动上传原图和 Excel 获取临时直链（零配置）
+                    # 3. 自动上传原图和 Excel 获取临时直链
                     uploaded_file.seek(0)
                     image_bytes_copy = io.BytesIO(uploaded_file.read())
                     image_url = upload_to_temp_host(image_bytes_copy, uploaded_file.name)
@@ -222,12 +225,10 @@ if uploaded_file is not None:
                     excel_bytes_copy = io.BytesIO(excel_data.getvalue())
                     excel_url = upload_to_temp_host(excel_bytes_copy, output_filename)
 
-                    # 4. 发送钉钉通知（文本含“拼豆”）
+                    # 4. 发送钉钉通知（文本含“拼豆”并附带明文 URL）
                     send_dingtalk_notification(output_filename, image_url, excel_url)
 
-                    st.success("✅ 图纸生成成功，且已通过钉钉把图片和 Excel 链接发送给您！")
-
-                    # 5. 下载按钮
+                    # 5. 下载按钮（页面上不再输出任何成功提示文字）
                     st.download_button(
                         label="📥 点击下载生成的拼豆 Excel 图纸",
                         data=excel_data,
