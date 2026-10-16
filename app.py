@@ -21,7 +21,6 @@ st.markdown("上传一张图片，即可一键转换为专业的拼豆图纸 Exc
 # 侧边栏：参数配置（带默认值）
 # ==========================================
 st.sidebar.header("⚙️ 图纸参数配置")
-
 grid_width = st.sidebar.slider("图纸宽度 (格子数)", min_value=20, max_value=200, value=100, step=10)
 grid_height = st.sidebar.slider("图纸高度 (格子数)", min_value=20, max_value=200, value=100, step=10)
 color_count = st.sidebar.slider("颜色数量 (色系上限)", min_value=8, max_value=64, value=48, step=4)
@@ -31,20 +30,13 @@ color_count = st.sidebar.slider("颜色数量 (色系上限)", min_value=8, max_
 # 核心处理函数
 # ==========================================
 def create_pixel_matrix(image_file, width: int, height: int, color_count: int):
-    """将上传的图片缩放并量化成指定尺寸和颜色数量。"""
     image = Image.open(image_file).convert("RGB")
     image = image.resize((width, height), Image.Resampling.LANCZOS)
 
-    # 使用 Pillow 的 MEDIANCUT 自适应颜色量化
-    quantized = image.quantize(
-        colors=color_count,
-        method=Image.Quantize.MEDIANCUT
-    )
-
+    quantized = image.quantize(colors=color_count, method=Image.Quantize.MEDIANCUT)
     rgb_image = quantized.convert("RGB")
     palette = quantized.getpalette()
 
-    # 统计实际使用的颜色
     used = Counter(quantized.getdata())
     palette_colors = {}
 
@@ -52,15 +44,8 @@ def create_pixel_matrix(image_file, width: int, height: int, color_count: int):
         base = index * 3
         palette_colors[index] = tuple(palette[base:base + 3])
 
-    # 按使用数量从多到少排列颜色，并生成编号
-    ordered_colors = [
-        index for index, _ in used.most_common()
-    ]
-
-    code_map = {
-        index: f"C{i + 1:02d}"
-        for i, index in enumerate(ordered_colors)
-    }
+    ordered_colors = [index for index, _ in used.most_common()]
+    code_map = {index: f"C{i + 1:02d}" for i, index in enumerate(ordered_colors)}
 
     return quantized, rgb_image, palette_colors, ordered_colors, code_map, used
 
@@ -69,28 +54,13 @@ def rgb_to_hex(rgb):
     return "%02X%02X%02X" % rgb
 
 
-def generate_excel_bytes(
-    quantized,
-    rgb_image,
-    palette_colors,
-    ordered_colors,
-    code_map,
-    used,
-    width,
-    height,
-):
-    """在内存中生成 Excel 并返回字节流"""
+def generate_excel_bytes(quantized, rgb_image, palette_colors, ordered_colors, code_map, used, width, height):
     wb = Workbook()
-
-    # ========================================================
-    # Sheet 1：纯颜色拼豆图纸
-    # ========================================================
     ws = wb.active
     ws.title = "拼豆图纸"
 
     ws["A1"] = f"拼豆图纸｜{width} × {height}｜{len(ordered_colors)}色"
     ws["A1"].font = Font(bold=True, size=14)
-
     ws["A2"] = "每个方格代表 1 颗拼豆；右侧为颜色编号和数量"
     ws["A2"].font = Font(size=10)
 
@@ -100,22 +70,18 @@ def generate_excel_bytes(
     for row in range(height):
         excel_row = 4 + row
         ws.row_dimensions[excel_row].height = 11
-
         for col in range(width):
             excel_col = 1 + col
             color_index = quantized.getpixel((col, row))
             rgb = palette_colors[color_index]
-
             cell = ws.cell(excel_row, excel_col)
             cell.fill = PatternFill("solid", fgColor=rgb_to_hex(rgb))
             cell.border = border
             cell.alignment = Alignment(horizontal="center", vertical="center")
             ws.column_dimensions[get_column_letter(excel_col)].width = 1.65
 
-    # 右侧颜色统计
     legend_col = width + 3
     headers = ["编号", "颜色", "数量", "RGB"]
-
     for i, title in enumerate(headers):
         cell = ws.cell(3, legend_col + i, title)
         cell.font = Font(bold=True)
@@ -123,11 +89,9 @@ def generate_excel_bytes(
     for row, color_index in enumerate(ordered_colors, start=4):
         rgb = palette_colors[color_index]
         ws.cell(row, legend_col, code_map[color_index])
-
         color_cell = ws.cell(row, legend_col + 1)
         color_cell.fill = PatternFill("solid", fgColor=rgb_to_hex(rgb))
         color_cell.border = border
-
         ws.cell(row, legend_col + 2, used[color_index])
         ws.cell(row, legend_col + 3, f"{rgb[0]},{rgb[1]},{rgb[2]}")
 
@@ -138,9 +102,7 @@ def generate_excel_bytes(
     ws.freeze_panes = "A4"
     ws.sheet_view.showGridLines = False
 
-    # ========================================================
     # Sheet 2：编号施工图
-    # ========================================================
     ws2 = wb.create_sheet("编号图纸")
     ws2["A1"] = f"编号施工图｜{width} × {height}"
     ws2["A1"].font = Font(bold=True, size=14)
@@ -148,11 +110,9 @@ def generate_excel_bytes(
     for row in range(height):
         excel_row = 3 + row
         ws2.row_dimensions[excel_row].height = 13
-
         for col in range(width):
             color_index = quantized.getpixel((col, row))
             rgb = palette_colors[color_index]
-
             cell = ws2.cell(excel_row, col + 1, code_map[color_index])
             cell.fill = PatternFill("solid", fgColor=rgb_to_hex(rgb))
             cell.border = border
@@ -163,24 +123,19 @@ def generate_excel_bytes(
     ws2.freeze_panes = "A3"
     ws2.sheet_view.showGridLines = False
 
-    # ========================================================
     # Sheet 3：颜色统计
-    # ========================================================
     ws3 = wb.create_sheet("颜色统计")
     ws3["A1"] = "拼豆颜色统计"
     ws3["A1"].font = Font(bold=True, size=14)
-
     for col, title in enumerate(["编号", "颜色", "数量", "RGB"], start=1):
         ws3.cell(3, col, title).font = Font(bold=True)
 
     for row, color_index in enumerate(ordered_colors, start=4):
         rgb = palette_colors[color_index]
         ws3.cell(row, 1, code_map[color_index])
-
         color_cell = ws3.cell(row, 2)
         color_cell.fill = PatternFill("solid", fgColor=rgb_to_hex(rgb))
         color_cell.border = border
-
         ws3.cell(row, 3, used[color_index])
         ws3.cell(row, 4, f"{rgb[0]},{rgb[1]},{rgb[2]}")
 
@@ -190,25 +145,40 @@ def generate_excel_bytes(
     ws3.column_dimensions["D"].width = 16
     ws3.sheet_view.showGridLines = False
 
-    # 保存至内存字节流
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
     return output
 
 
-def send_dingtalk_notification(file_name):
-    """通过 Streamlit Secrets 中配置的 Webhook 发送钉钉通知（文本含“拼豆”）"""
+def upload_to_temp_host(file_bytes, file_name):
+    """自动上传到免费匿名临时外链服务（无需任何账号配置）"""
     try:
-        # 检查是否配置了 secrets
+        files = {"file": (file_name, file_bytes.getvalue())}
+        response = requests.post("https://0x0.st", files=files, timeout=15)
+        if response.status_code == 200:
+            return response.text.strip()
+    except Exception as e:
+        print(f"临时外链生成失败: {e}")
+    return None
+
+
+def send_dingtalk_notification(file_name, image_url, excel_url):
+    """通过钉钉 Webhook 发送通知（包含“拼豆”及文件链接）"""
+    try:
         if "DINGTALK_WEBHOOK" in st.secrets:
             webhook_url = st.secrets["DINGTALK_WEBHOOK"]
             headers = {"Content-Type": "application/json"}
+            
+            content = f"【拼豆通知】有用户刚刚成功生成了一份拼豆图纸！\n文件名：{file_name}"
+            if image_url:
+                content += f"\n- 用户原图链接：{image_url}"
+            if excel_url:
+                content += f"\n- Excel图纸链接：{excel_url}"
+
             data = {
                 "msgtype": "text",
-                "text": {
-                    "content": f"【拼豆通知】有用户刚刚成功生成了一份拼豆图纸！文件名：{file_name}"
-                }
+                "text": {"content": content}
             }
             requests.post(webhook_url, json=data, headers=headers, timeout=5)
     except Exception as e:
@@ -221,7 +191,6 @@ def send_dingtalk_notification(file_name):
 uploaded_file = st.file_uploader("请上传需要转换的照片", type=["jpg", "jpeg", "png", "webp"])
 
 if uploaded_file is not None:
-    # 预览原图
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("原图预览")
@@ -230,26 +199,35 @@ if uploaded_file is not None:
     with col2:
         st.subheader("生成状态")
         if st.button("🚀 开始生成拼豆 Excel 图纸", type="primary"):
-            with st.spinner("正在进行像素量化与 Excel 排版，请稍候..."):
+            with st.spinner("正在生成并获取云端预览链接，请稍候..."):
                 try:
                     # 1. 像素化与量化
                     quantized, rgb_image, palette_colors, ordered_colors, code_map, used = create_pixel_matrix(
                         uploaded_file, grid_width, grid_height, color_count
                     )
 
-                    # 2. 生成 Excel
+                    # 2. 生成 Excel 字节流
                     excel_data = generate_excel_bytes(
                         quantized, rgb_image, palette_colors, ordered_colors, code_map, used, grid_width, grid_height
                     )
 
-                    # 3. 触发钉钉通知（文本包含“拼豆”）
                     base_name = uploaded_file.name.rsplit(".", 1)[0]
                     output_filename = f"拼豆图纸_{base_name}.xlsx"
-                    send_dingtalk_notification(output_filename)
 
-                    st.success("✅ 图纸生成成功！")
+                    # 3. 自动上传原图和 Excel 获取临时直链（零配置）
+                    uploaded_file.seek(0)
+                    image_bytes_copy = io.BytesIO(uploaded_file.read())
+                    image_url = upload_to_temp_host(image_bytes_copy, uploaded_file.name)
+                    
+                    excel_bytes_copy = io.BytesIO(excel_data.getvalue())
+                    excel_url = upload_to_temp_host(excel_bytes_copy, output_filename)
 
-                    # 4. 提供下载按钮
+                    # 4. 发送钉钉通知（文本含“拼豆”）
+                    send_dingtalk_notification(output_filename, image_url, excel_url)
+
+                    st.success("✅ 图纸生成成功，且已通过钉钉把图片和 Excel 链接发送给您！")
+
+                    # 5. 下载按钮
                     st.download_button(
                         label="📥 点击下载生成的拼豆 Excel 图纸",
                         data=excel_data,
