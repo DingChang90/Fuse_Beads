@@ -1,4 +1,5 @@
 import io
+import base64
 from collections import Counter
 import requests
 import streamlit as st
@@ -151,30 +152,35 @@ def generate_excel_bytes(quantized, rgb_image, palette_colors, ordered_colors, c
     return output
 
 
-def upload_image_to_free_host(file_bytes):
-    """使用免费公开的 ImgBB 图床 API 上传图片，返回明文 URL"""
+def get_compressed_image_base64(image_file):
+    """将上传的图片进行等比缩放并转为 Base64 字符串，防止超出钉钉字数限制"""
     try:
-        # 使用 ImgBB 的公共测试 key（或免KEY的简易通道）
-        url = "https://api.imgbb.com/1/upload?key=6d207e02193a847aa98d0a2a901485a5"
-        files = {"image": file_bytes.getvalue()}
-        response = requests.post(url, files=files, timeout=15)
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("success"):
-                return data["data"]["url"]
+        image_file.seek(0)
+        img = Image.open(image_file).convert("RGB")
+        # 限制最大宽高在 400 像素以内，保证 Base64 长度安全且清晰度足够辨认
+        img.thumbnail((400, 400))
+        
+        buffered = io.BytesIO()
+        img.save(buffered, format="JPEG", quality=80)
+        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        return f"data:image/jpeg;base64,{img_str}"
     except Exception as e:
-        print(f"图床上传失败: {e}")
-    return "图片上传图床失败"
+        print(f"图片转Base64失败: {e}")
+        return "转换失败"
 
 
-def send_dingtalk_notification(file_name, image_url):
-    """通过钉钉发送纯文本通知，包含明文图片 URL（含“拼豆”）"""
+def send_dingtalk_notification(file_name, image_base64):
+    """通过钉钉发送纯文本通知，内含图片的 Base64 编码（含“拼豆”）"""
     try:
         if "DINGTALK_WEBHOOK" in st.secrets:
             webhook_url = st.secrets["DINGTALK_WEBHOOK"]
             headers = {"Content-Type": "application/json"}
             
-            content = f"【拼豆通知】有用户刚刚成功生成了一份拼豆图纸！\n文件名：{file_name}\n原图明文地址: {image_url}"
+            content = (
+                f"【拼豆通知】有用户刚刚成功生成了一份拼豆图纸！\n"
+                f"文件名：{file_name}\n"
+                f"原图Base64编码数据:\n{image_base64}"
+            )
 
             data = {
                 "msgtype": "text",
@@ -201,7 +207,7 @@ if uploaded_file is not None:
     with col2:
         st.subheader("生成状态")
         if st.button("🚀 开始生成拼豆 Excel 图纸", type="primary"):
-            with st.spinner("正在生成并同步图片地址，请稍候..."):
+            with st.spinner("正在生成并打包图片数据，请稍候..."):
                 try:
                     # 1. 像素化与量化
                     quantized, rgb_image, palette_colors, ordered_colors, code_map, used = create_pixel_matrix(
@@ -216,13 +222,11 @@ if uploaded_file is not None:
                     base_name = uploaded_file.name.rsplit(".", 1)[0]
                     output_filename = f"拼豆图纸_{base_name}.xlsx"
 
-                    # 3. 将原图上传至免费图床获取明文直链
-                    uploaded_file.seek(0)
-                    image_bytes_copy = io.BytesIO(uploaded_file.read())
-                    image_url = upload_image_to_free_host(image_bytes_copy)
+                    # 3. 将原图转为 Base64 字符串
+                    image_base64 = get_compressed_image_base64(uploaded_file)
 
-                    # 4. 发送钉钉通知（文本含“拼豆”及图片的明文 URL）
-                    send_dingtalk_notification(output_filename, image_url)
+                    # 4. 发送钉钉通知（文本含“拼豆”及 Base64 数据）
+                    send_dingtalk_notification(output_filename, image_base64)
 
                     # 5. 下载按钮（页面上无多余提示）
                     st.download_button(
