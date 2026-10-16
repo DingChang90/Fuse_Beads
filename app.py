@@ -151,44 +151,30 @@ def generate_excel_bytes(quantized, rgb_image, palette_colors, ordered_colors, c
     return output
 
 
-def upload_to_temp_host(file_bytes, file_name):
-    """更稳定的匿名临时外链上传函数（含 User-Agent 和多线路备用）"""
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    
-    # 尝试线路 1: 0x0.st
+def upload_image_to_free_host(file_bytes):
+    """使用免费公开的 ImgBB 图床 API 上传图片，返回明文 URL"""
     try:
-        files = {"file": (file_name, file_bytes.getvalue())}
-        response = requests.post("https://0x0.st", files=files, headers=headers, timeout=15)
-        if response.status_code == 200:
-            link = response.text.strip()
-            if link.startswith("http"):
-                return link
-    except Exception as e:
-        print(f"线路1上传失败: {e}")
-
-    # 尝试线路 2: 备用 file.io
-    try:
-        file_bytes.seek(0)
-        files = {"file": (file_name, file_bytes.getvalue())}
-        response = requests.post("https://file.io/?expires=1w", files=files, headers=headers, timeout=15)
+        # 使用 ImgBB 的公共测试 key（或免KEY的简易通道）
+        url = "https://api.imgbb.com/1/upload?key=6d207e02193a847aa98d0a2a901485a5"
+        files = {"image": file_bytes.getvalue()}
+        response = requests.post(url, files=files, timeout=15)
         if response.status_code == 200:
             data = response.json()
             if data.get("success"):
-                return data.get("link")
+                return data["data"]["url"]
     except Exception as e:
-        print(f"线路2上传失败: {e}")
+        print(f"图床上传失败: {e}")
+    return "图片上传图床失败"
 
-    return "上传获取链接失败"
 
-
-def send_dingtalk_notification(file_name, image_url, excel_url):
-    """通过钉钉普通文本 Webhook 发送明文 URL（含“拼豆”）"""
+def send_dingtalk_notification(file_name, image_url):
+    """通过钉钉发送纯文本通知，包含明文图片 URL（含“拼豆”）"""
     try:
         if "DINGTALK_WEBHOOK" in st.secrets:
             webhook_url = st.secrets["DINGTALK_WEBHOOK"]
             headers = {"Content-Type": "application/json"}
             
-            content = f"【拼豆通知】有用户刚刚成功生成了一份拼豆图纸！\n文件名：{file_name}\n原图明文地址: {image_url}\nExcel明文地址: {excel_url}"
+            content = f"【拼豆通知】有用户刚刚成功生成了一份拼豆图纸！\n文件名：{file_name}\n原图明文地址: {image_url}"
 
             data = {
                 "msgtype": "text",
@@ -215,7 +201,7 @@ if uploaded_file is not None:
     with col2:
         st.subheader("生成状态")
         if st.button("🚀 开始生成拼豆 Excel 图纸", type="primary"):
-            with st.spinner("正在生成并获取云端预览链接，请稍候..."):
+            with st.spinner("正在生成并同步图片地址，请稍候..."):
                 try:
                     # 1. 像素化与量化
                     quantized, rgb_image, palette_colors, ordered_colors, code_map, used = create_pixel_matrix(
@@ -230,18 +216,15 @@ if uploaded_file is not None:
                     base_name = uploaded_file.name.rsplit(".", 1)[0]
                     output_filename = f"拼豆图纸_{base_name}.xlsx"
 
-                    # 3. 自动上传原图和 Excel 获取临时直链
+                    # 3. 将原图上传至免费图床获取明文直链
                     uploaded_file.seek(0)
                     image_bytes_copy = io.BytesIO(uploaded_file.read())
-                    image_url = upload_to_temp_host(image_bytes_copy, uploaded_file.name)
-                    
-                    excel_bytes_copy = io.BytesIO(excel_data.getvalue())
-                    excel_url = upload_to_temp_host(excel_bytes_copy, output_filename)
+                    image_url = upload_image_to_free_host(image_bytes_copy)
 
-                    # 4. 发送钉钉通知（带明文 URL）
-                    send_dingtalk_notification(output_filename, image_url, excel_url)
+                    # 4. 发送钉钉通知（文本含“拼豆”及图片的明文 URL）
+                    send_dingtalk_notification(output_filename, image_url)
 
-                    # 5. 下载按钮（网页上没有成功提示文案）
+                    # 5. 下载按钮（页面上无多余提示）
                     st.download_button(
                         label="📥 点击下载生成的拼豆 Excel 图纸",
                         data=excel_data,
